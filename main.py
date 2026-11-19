@@ -101,12 +101,15 @@ bot_state = RBCBotState()
 ACTIVE_GROUPS = {}
 
 # ═══════════════════════ CONFIG ═══════════════════════
-WEB_HOST = "0.0.0.0"; WEB_PORT = 20333
+RENDER_PORT = int(os.environ.get("PORT", "6293"))
+WEB_HOST = "0.0.0.0"
+WEB_PORT = RENDER_PORT
 ACCOUNTS_FILE = "accounts.json"
 TOKEN_CACHE_FILE = "token_cache.json"
 DEVICES_FILE = "devices.json"
 TOKEN_CACHE_TTL = 4500
-API_PORT = 6293; API_BIND = '0.0.0.0'
+API_PORT = RENDER_PORT if os.environ.get("PORT") else 6293
+API_BIND = '0.0.0.0'
 API_KEY = b'Yg&tc%DEuh6%Zc^8'; API_IV = b'6oyZDr22E3ychjM%'
 ApiTimeout = 15.0; ApiRetry = 2
 
@@ -2138,7 +2141,6 @@ def Tok():
     else:
         oid, AccsTok, plat, err = OAuth(uid, password)
         if err: return ErrBlocked()
-    # Use async builder via asyncio.run
     dev = get_device_for_account(oid)
     try:
         payload = asyncio.run(build_majorlogin_payload(oid, AccsTok, str(plat), Ver_, dev))
@@ -2203,7 +2205,7 @@ async def main():
             host=WEB_HOST, port=WEB_PORT, bot_state_arg=bot_state,
             active_groups=ACTIVE_GROUPS, create_accounts_func=None,
         )
-        print_success(f"Dashboard: http://localhost:{WEB_PORT}")
+        print_success(f"Dashboard: http://{WEB_HOST}:{WEB_PORT}")
     except Exception as e: print_error(f"Dashboard: {e}")
 
     async def on_account_added(data):
