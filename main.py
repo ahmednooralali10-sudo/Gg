@@ -272,18 +272,16 @@ AES_IV  = b'6oyZDr22E3ychjM%'
 
 # ═══════════════════════ LOGGING ═══════════════════════
 class Colors:
-    GREEN='[92m'; FAIL='[91m'; WARNING='[93m'
-    CYAN='[96m'; MAGENTA='[95m'; WHITE='[97m'
-    GOLD='[38;5;220m'; BOLD='[1m'; DIM='[2m'; ENDC='[0m'
+    GREEN='\033[92m'; FAIL='\033[91m'; WARNING='\033[93m'
+    CYAN='\033[96m'; MAGENTA='\033[95m'; WHITE='\033[97m'
+    GOLD='\033[38;5;220m'; BOLD='\033[1m'; DIM='\033[2m'; ENDC='\033[0m'
 RBC_TAG = f"{Colors.GOLD}[AVI-GLORY]{Colors.ENDC}"
 
 def _rbc_banner():
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"
-{Colors.GOLD}════════════════════════════════════════════════════════════════════{Colors.ENDC}", flush=True)
+    print(f"\n{Colors.GOLD}════════════════════════════════════════════════════════════════════{Colors.ENDC}", flush=True)
     print(f"{Colors.GOLD}[AVI] TEAM AVI SQUAD · HOMER 5506 · TOKEN API · {now}{Colors.ENDC}", flush=True)
-    print(f"{Colors.GOLD}════════════════════════════════════════════════════════════════════{Colors.ENDC}
-", flush=True)
+    print(f"{Colors.GOLD}════════════════════════════════════════════════════════════════════{Colors.ENDC}\n", flush=True)
 
 def print_colored(t, c=Colors.WHITE):
     try: print(f"{c}{t}{Colors.ENDC}", flush=True)
@@ -498,9 +496,7 @@ def _walk_proto(B, Pos=0, End=None, depth=0):
                 DecOk = False
                 try:
                     S = Raw.decode("utf-8")
-                    if all(C.isprintable() or C in "
-
-	" for C in S):
+                    if all(C.isprintable() or C in "\n\r\t" for C in S):
                         Out.setdefault(F, []).append(S); DecOk = True
                 except Exception: pass
                 if not DecOk:
@@ -967,7 +963,7 @@ def accept_team_invite(target_uid, group_id, key, iv):
     fields = {1: 4, 2: {1: int(target_uid), 3: int(target_uid),
         4: bytes.fromhex("0107090a0b120f19202729"), 8: 1,
         9: {1: "08FBA33B0522052002041B0222220007000C00010004000547E265AE1080779546762514110104076fa2e8770e748c3f6a68ed75000000ff08080500cacfa16d",
-            2: 235, 3: {14: 80, 11: 86}, 4: "{Y\R", 6: 13, 7: {2: 4},
+            2: 235, 3: {14: 80, 11: 86}, 4: "{Y\\R", 6: 13, 7: {2: 4},
             8: gv, 9: 2, 10: 1, 11: "0362625351"},
         10: str(group_id),
         11: {"1": "IDC3", "2": 107, "3": "ID"}, 13: "en", 16: "374f5219",
@@ -2007,7 +2003,6 @@ async def fetch_guild_info_from_game(guild_id: str, region: str = "IND") -> Dict
     gid_int = int(str(guild_id).strip())
     reg = str(region or "IND").upper()
 
-    # Pick an active credential
     cred = None
     for _, ad in bot_state.account_credentials.items():
         if isinstance(ad, dict) and ad.get("token") and ad.get("server_url"):
@@ -2090,7 +2085,6 @@ def _serialize_group(group_key: str, g: Dict[str, Any]) -> Dict[str, Any]:
             "status": acc.get("status", "ONLINE"),
             "level": acc.get("level", 1),
         })
-    # Fallback: attach currently registered accounts if group has none bound yet
     if not accs:
         for uid, acc in list(bot_state.accounts.items())[:g.get("target_count", 4)]:
             accs.append({
@@ -2135,9 +2129,7 @@ api_app = Flask(__name__)
 logging.getLogger('werkzeug').disabled = True
 api_app.logger.disabled = True
 logging.getLogger('flask.app').disabled = True
-Err = "<html><body><h1>503 Service Unavailable</h1>
-No server is available to handle this request.
-</body></html>"
+Err = "<html><body><h1>503 Service Unavailable</h1>\nNo server is available to handle this request.\n</body></html>"
 def ErrBlocked(): return Response(Err, status=503, mimetype="text/html")
 def Pretty(obj): return Response(json.dumps(obj, indent=2, ensure_ascii=False), mimetype="application/json")
 
