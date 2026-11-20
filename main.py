@@ -103,12 +103,12 @@ ACTIVE_GROUPS = {}
 # ═══════════════════════ CONFIG ═══════════════════════
 RENDER_PORT = int(os.environ.get("PORT", "6293"))
 WEB_HOST = "0.0.0.0"
-WEB_PORT = RENDER_PORT
+WEB_PORT = 20333
 ACCOUNTS_FILE = "accounts.json"
 TOKEN_CACHE_FILE = "token_cache.json"
 DEVICES_FILE = "devices.json"
 TOKEN_CACHE_TTL = 4500
-API_PORT = RENDER_PORT if os.environ.get("PORT") else 6293
+API_PORT = RENDER_PORT
 API_BIND = '0.0.0.0'
 API_KEY = b'Yg&tc%DEuh6%Zc^8'; API_IV = b'6oyZDr22E3ychjM%'
 ApiTimeout = 15.0; ApiRetry = 2
@@ -1101,7 +1101,6 @@ async def play_game(server_ip_port, udp_token, udp_key, real_match_id,
     uid_str = str(account_id)
     loop = asyncio.get_running_loop()
     game_mode = getattr(config, "Clash_Mode", 15)
-    # toolsudp.run_match expects (host, port, ... udp_jwt ...)
     host, port_s = server_ip_port.split(":")
     port = int(port_s)
 
@@ -1111,8 +1110,8 @@ async def play_game(server_ip_port, udp_token, udp_key, real_match_id,
                 host, port,
                 int(account_id),
                 udp_key,
-                udp_token,      # full UDP JWT
-                "",             # sharma is empty — ff_match splits internally
+                udp_token,
+                "",
                 suffix="0",
                 game_mode=game_mode,
                 map_id=1,
@@ -2110,6 +2109,11 @@ def HandleNotFound(E): return ErrBlocked()
 def HandleMethodNotAllowed(E): return ErrBlocked()
 @api_app.errorhandler(500)
 def HandleServerError(E): return ErrBlocked()
+
+@api_app.route('/', methods=['GET'])
+@api_app.route('/health', methods=['GET'])
+def HealthCheck():
+    return Pretty({"status": "ok", "api_port": API_PORT, "web_port": WEB_PORT}), 200
 
 @api_app.route('/Ver', methods=['GET'])
 @api_app.route('/ver', methods=['GET'])
