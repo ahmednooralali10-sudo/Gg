@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 # ═══════════════════════════════════════════════════════════════════
-#  TEAM AVI — Squad Bot + Flask Token Extractor  (FIXED)
+#  TEAM AVI — Squad Bot + Flask Token Extractor + Dashboard API
 #  • Homer (skill 5506) equip via homor_rudp, safe proto wrapper
 #  • In-match UDP delegated to toolsudp.run_match (movement+skill)
 #  • Use_Auth_Packet = False (stops "handshake failed")
 #  • Squad create→invite→ready→start flow intact
+#  • Linked with templates/index.html (/api/stats, /api/groups,
+#    /api/guild_info, /api/create_team, /api/groups/stop, /api/groups/restart)
 # ═══════════════════════════════════════════════════════════════════
 import sys, asyncio, httpx, random, json, socket, struct, time, os, uuid
 import itertools, secrets, traceback, base64, threading
@@ -12,7 +14,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
 
 import logging, urllib3
-from flask import Flask, Response, request
+from flask import Flask, Response, request, render_template, jsonify
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 if sys.platform == "win32":
@@ -98,7 +100,8 @@ class RBCBotState:
 
 
 bot_state = RBCBotState()
-ACTIVE_GROUPS = {}
+ACTIVE_GROUPS: Dict[str, Dict[str, Any]] = {}
+MAIN_LOOP: Optional[asyncio.AbstractEventLoop] = None
 
 # ═══════════════════════ CONFIG ═══════════════════════
 RENDER_PORT = int(os.environ.get("PORT", "6293"))
@@ -140,7 +143,6 @@ BYPASS_PACKET_JITTER  = True
 BYPASS_HELLO_DELAY    = True
 BYPASS_KA_JITTER      = True
 
-# (movement constants kept for compat; real movement handled by ff_match)
 ENABLE_SPEED_MOVEMENT       = True
 MOVEMENT_PATTERN            = "circle"
 MOVEMENT_TICK_MS            = 100
@@ -270,16 +272,18 @@ AES_IV  = b'6oyZDr22E3ychjM%'
 
 # ═══════════════════════ LOGGING ═══════════════════════
 class Colors:
-    GREEN='\033[92m'; FAIL='\033[91m'; WARNING='\033[93m'
-    CYAN='\033[96m'; MAGENTA='\033[95m'; WHITE='\033[97m'
-    GOLD='\033[38;5;220m'; BOLD='\033[1m'; DIM='\033[2m'; ENDC='\033[0m'
+    GREEN='[92m'; FAIL='[91m'; WARNING='[93m'
+    CYAN='[96m'; MAGENTA='[95m'; WHITE='[97m'
+    GOLD='[38;5;220m'; BOLD='[1m'; DIM='[2m'; ENDC='[0m'
 RBC_TAG = f"{Colors.GOLD}[AVI-GLORY]{Colors.ENDC}"
 
 def _rbc_banner():
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"\n{Colors.GOLD}════════════════════════════════════════════════════════════════════{Colors.ENDC}", flush=True)
+    print(f"
+{Colors.GOLD}════════════════════════════════════════════════════════════════════{Colors.ENDC}", flush=True)
     print(f"{Colors.GOLD}[AVI] TEAM AVI SQUAD · HOMER 5506 · TOKEN API · {now}{Colors.ENDC}", flush=True)
-    print(f"{Colors.GOLD}════════════════════════════════════════════════════════════════════{Colors.ENDC}\n", flush=True)
+    print(f"{Colors.GOLD}════════════════════════════════════════════════════════════════════{Colors.ENDC}
+", flush=True)
 
 def print_colored(t, c=Colors.WHITE):
     try: print(f"{c}{t}{Colors.ENDC}", flush=True)
@@ -364,7 +368,6 @@ def create_proto(fields):
         elif isinstance(value, (bytes, bytearray)): packet.extend(_pb_length(field, bytes(value)))
     return bytes(packet)
 
-# Safe wrapper for homor_rudp — fixes "str << int" error
 def _roles_proto(fields):
     try:
         return create_proto(fields)
@@ -495,7 +498,9 @@ def _walk_proto(B, Pos=0, End=None, depth=0):
                 DecOk = False
                 try:
                     S = Raw.decode("utf-8")
-                    if all(C.isprintable() or C in "\n\r\t" for C in S):
+                    if all(C.isprintable() or C in "
+
+	" for C in S):
                         Out.setdefault(F, []).append(S); DecOk = True
                 except Exception: pass
                 if not DecOk:
@@ -924,7 +929,6 @@ def create_packet(Pk, N, K, V):
     if pad_len < 0: pad_len = 0
     return bytes.fromhex(N + ('0' * pad_len) + hexlen + PkEnc)
 
-# Use live client version (OB55 = 1.132.16 typically)
 def _team_game_version():
     try:
         return str(config.LIVE.client_version or "1.132.16")
@@ -963,7 +967,7 @@ def accept_team_invite(target_uid, group_id, key, iv):
     fields = {1: 4, 2: {1: int(target_uid), 3: int(target_uid),
         4: bytes.fromhex("0107090a0b120f19202729"), 8: 1,
         9: {1: "08FBA33B0522052002041B0222220007000C00010004000547E265AE1080779546762514110104076fa2e8770e748c3f6a68ed75000000ff08080500cacfa16d",
-            2: 235, 3: {14: 80, 11: 86}, 4: "{Y\\R", 6: 13, 7: {2: 4},
+            2: 235, 3: {14: 80, 11: 86}, 4: "{Y\R", 6: 13, 7: {2: 4},
             8: gv, 9: 2, 10: 1, 11: "0362625351"},
         10: str(group_id),
         11: {"1": "IDC3", "2": 107, "3": "ID"}, 13: "en", 16: "374f5219",
@@ -1071,7 +1075,7 @@ async def prepare_homer_roles(ad: dict):
         ok = await homor_rudp.init_homor_roles(
             token, server_url, release,
             encrypt_aes_fn=encrypt_api,
-            create_proto_fn=_roles_proto,   # ← FIX: safe wrapper
+            create_proto_fn=_roles_proto,
         )
         if ok:
             try: config.LIVE.set_skill(skill_id=homor_rudp.SKILL_HOMOR)
@@ -1087,17 +1091,6 @@ async def play_game(server_ip_port, udp_token, udp_key, real_match_id,
                     account_id, player_region, client_version,
                     key, iv, match_index,
                     on_match_complete=None, account_data=None):
-    """
-    In-match UDP is fully handled by toolsudp.run_match():
-      • raw AES auth packet (disabled via config.Use_Auth_Packet=False)
-      • TEA HELLO handshake
-      • Cmd 447 / 448 join (uses match_id NOT match_code)
-      • MovementPlanner (follow-mode movement)
-      • ActiveSession.use_skill → Homer skill 5506 via cmd 248
-      • Fire / pickup / switch weapon
-      • Cmd 2000 server-time sync
-      • End-of-match claim + lobby calls
-    """
     uid_str = str(account_id)
     loop = asyncio.get_running_loop()
     game_mode = getattr(config, "Clash_Mode", 15)
@@ -1330,7 +1323,6 @@ async def functional_battle_royale(addrs, starter_packet, account_region, client
         except Exception: pass
 
     async def _team_coordinator():
-        """Leader: create team → invite → ready → start."""
         try:
             deadline = time.time() + TEAM_PEER_WAIT_TIMEOUT
             while time.time() < deadline:
@@ -1352,7 +1344,6 @@ async def functional_battle_royale(addrs, starter_packet, account_region, client
                 print_success(f"[TEAM] ✅ {n} peers online")
             await asyncio.sleep(TEAM_READY_DELAY)
 
-            # create team
             print_success(f"[TEAM] 👑 {uid_str} creating team...")
             own_id_num = current_account_data.get('account_id', uid_str) if current_account_data else uid_str
             try:
@@ -1905,7 +1896,6 @@ async def run_account_worker(ad, label):
     acc_id = str(ad['account_id'])
     info_task = None; exp_task = None; ping_task = None
     try:
-        # ── 1. Homer role setup (skill 5506) ──
         await prepare_homer_roles(ad)
 
         reg = ad.get('region', 'ID')
@@ -2011,12 +2001,143 @@ def load_accounts():
         accounts.append({"uid": FALLBACK_UID, "password": FALLBACK_PASSWORD})
     return accounts
 
-# ═══════════════════════ FLASK TOKEN API ═══════════════════════
+# ═══════════════════════ GUILD / GROUP HELPERS (LINKED TO index.html) ═══════════════════════
+async def fetch_guild_info_from_game(guild_id: str, region: str = "IND") -> Dict[str, Any]:
+    """Query Garena GetClanInfoByClanID using any active logged-in account."""
+    gid_int = int(str(guild_id).strip())
+    reg = str(region or "IND").upper()
+
+    # Pick an active credential
+    cred = None
+    for _, ad in bot_state.account_credentials.items():
+        if isinstance(ad, dict) and ad.get("token") and ad.get("server_url"):
+            cred = ad
+            break
+
+    if not cred:
+        return {
+            "guild_id": str(gid_int),
+            "clan_name": f"Guild #{gid_int}",
+            "region": reg,
+            "guild_level": 1,
+            "slogan": "No active session to fetch live slogan",
+            "current_members": 0,
+            "max_members": 35,
+            "leader_id": "Unknown",
+            "score": 0,
+            "weekly_activity": 0,
+        }
+
+    srv = cred["server_url"].rstrip("/")
+    jwt = cred["token"]
+    rel = cred.get("release_version", "OB55")
+    url = f"{srv}/GetClanInfoByClanID"
+    payload = bytes.fromhex(encrypt_api(create_proto({1: gid_int}).hex()))
+    hdrs = {
+        "authorization": f"Bearer {jwt}",
+        "host": srv.replace("https://", "").replace("http://", "").split("/")[0],
+        "x-ga": "v1 1",
+        "content-type": "application/x-www-form-urlencoded",
+        "accept-encoding": "deflate, gzip",
+        "releaseversion": str(rel),
+        "user-agent": "UnityPlayer/2022.3.47f1",
+        "accept": "*/*",
+        "x-unity-version": "2022.3.47f1",
+    }
+    r = await client.post(url, headers=hdrs, content=payload, timeout=10.0)
+    if r.status_code != 200 or not r.content:
+        raise RuntimeError(f"Guild lookup HTTP {r.status_code}")
+
+    _, tree = _find_proto_root(r.content)
+    flat = tree_flat(tree)
+    clan_block = flat.get("1") if isinstance(flat.get("1"), dict) else flat
+    if isinstance(clan_block, dict):
+        clan_block = tree_flat(clan_block)
+    else:
+        clan_block = flat
+
+    clan_name = str(clan_block.get("2") or f"Guild #{gid_int}")
+    leader_id = str(clan_block.get("3") or "Unknown")
+    guild_level = int(clan_block.get("4") or 1)
+    current_members = int(clan_block.get("6") or 0)
+    max_members = int(clan_block.get("7") or 35)
+    slogan = str(clan_block.get("9") or "")
+    score = int(clan_block.get("10") or clan_block.get("8") or 0)
+    weekly = int(clan_block.get("11") or 0)
+
+    return {
+        "guild_id": str(gid_int),
+        "clan_name": clan_name,
+        "region": reg,
+        "guild_level": guild_level,
+        "slogan": slogan,
+        "current_members": current_members,
+        "max_members": max_members,
+        "leader_id": leader_id,
+        "score": score,
+        "weekly_activity": weekly,
+    }
+
+
+def _serialize_group(group_key: str, g: Dict[str, Any]) -> Dict[str, Any]:
+    gi = g.get("guild_info") or {}
+    accs = []
+    for uid in g.get("account_uids", []):
+        acc = bot_state.accounts.get(str(uid), {})
+        accs.append({
+            "uid": str(uid),
+            "nickname": acc.get("nickname", f"Bot_{uid}"),
+            "status": acc.get("status", "ONLINE"),
+            "level": acc.get("level", 1),
+        })
+    # Fallback: attach currently registered accounts if group has none bound yet
+    if not accs:
+        for uid, acc in list(bot_state.accounts.items())[:g.get("target_count", 4)]:
+            accs.append({
+                "uid": str(uid),
+                "nickname": acc.get("nickname", f"Bot_{uid}"),
+                "status": acc.get("status", "ONLINE"),
+                "level": acc.get("level", 1),
+            })
+
+    status = g.get("status", "RUNNING")
+    if status == "GENERATING" and len(accs) >= g.get("target_count", 4):
+        status = "RUNNING"
+        g["status"] = "RUNNING"
+
+    base_score = int(gi.get("score", 0) or 0)
+    glory_pushed = int(g.get("glory_pushed", 0) or 0)
+    return {
+        "group_key": group_key,
+        "clan_name": gi.get("clan_name") or g.get("clan_name") or f"Guild #{g.get('guild_id', '')}",
+        "guild_id": str(g.get("guild_id", "")),
+        "region": str(g.get("region", "IND")),
+        "status": status,
+        "glory_pushed": glory_pushed,
+        "current_score": base_score + glory_pushed,
+        "current_members": int(gi.get("current_members", len(accs)) or len(accs)),
+        "max_members": int(gi.get("max_members", 35) or 35),
+        "guild_info": gi,
+        "accounts": accs,
+        "created_at": g.get("created_at", time.time()),
+    }
+
+
+def _run_coro_sync(coro, timeout=15.0):
+    if MAIN_LOOP and MAIN_LOOP.is_running():
+        fut = asyncio.run_coroutine_threadsafe(coro, MAIN_LOOP)
+        return fut.result(timeout=timeout)
+    return asyncio.run(coro)
+
+
+# ═══════════════════════ FLASK TOKEN API & TEMPLATES ═══════════════════════
 api_app = Flask(__name__)
 logging.getLogger('werkzeug').disabled = True
 api_app.logger.disabled = True
 logging.getLogger('flask.app').disabled = True
-Err = "<html><body><h1>503 Service Unavailable</h1>\nNo server is available to handle this request.\n</body></html>"
+Err = "<html><body><h1>503 Service Unavailable</h1>
+No server is available to handle this request.
+</body></html>"
 def ErrBlocked(): return Response(Err, status=503, mimetype="text/html")
 def Pretty(obj): return Response(json.dumps(obj, indent=2, ensure_ascii=False), mimetype="application/json")
 
@@ -2110,7 +2231,124 @@ def HandleMethodNotAllowed(E): return ErrBlocked()
 @api_app.errorhandler(500)
 def HandleServerError(E): return ErrBlocked()
 
+# ── HTML Dashboard Route (templates/index.html) ──
 @api_app.route('/', methods=['GET'])
+def IndexPage():
+    template_path = os.path.join(api_app.root_path, api_app.template_folder or "templates", "index.html")
+    if os.path.exists(template_path):
+        try:
+            return render_template(
+                "index.html",
+                bot_state=bot_state,
+                accounts=bot_state.accounts,
+                active_groups=ACTIVE_GROUPS,
+                api_port=API_PORT,
+                web_port=WEB_PORT,
+            )
+        except Exception as e:
+            return Response(f"Template error: {e}", status=500, mimetype="text/plain")
+    return Pretty({"status": "ok", "api_port": API_PORT, "web_port": WEB_PORT, "template_missing": "templates/index.html"}), 200
+
+# ── Dashboard REST Endpoints consumed by templates/index.html ──
+@api_app.route('/api/stats', methods=['GET'])
+def ApiStats():
+    return jsonify({
+        "ok": True,
+        "total_accounts": len(bot_state.accounts),
+        "matches_started": int(bot_state.matches_started),
+        "total_matches": int(bot_state.total_matches),
+        "total_gained_exp": int(bot_state.total_exp_gained),
+        "uptime": max(0, int(time.time() - bot_state.start_time)),
+    })
+
+@api_app.route('/api/groups', methods=['GET'])
+def ApiGroups():
+    groups_list = [_serialize_group(k, v) for k, v in ACTIVE_GROUPS.items()]
+    return jsonify({"ok": True, "groups": groups_list})
+
+@api_app.route('/api/guild_info', methods=['GET'])
+def ApiGuildInfo():
+    gid = (request.args.get("guild_id") or "").strip()
+    region = (request.args.get("region") or "IND").strip().upper()
+    if not gid or not gid.isdigit():
+        return jsonify({"ok": False, "error": "Invalid numeric Guild ID"}), 400
+    try:
+        info = _run_coro_sync(fetch_guild_info_from_game(gid, region), timeout=12.0)
+        return jsonify({"ok": True, "info": info})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@api_app.route('/api/create_team', methods=['POST'])
+def ApiCreateTeam():
+    body = request.get_json(silent=True) or {}
+    gid = str(body.get("guild_id") or "").strip()
+    region = str(body.get("region") or "IND").strip().upper()
+    count = int(body.get("count") or 4)
+    if not gid or not gid.isdigit():
+        return jsonify({"ok": False, "error": "Guild ID is required"}), 400
+
+    try:
+        guild_info = _run_coro_sync(fetch_guild_info_from_game(gid, region), timeout=12.0)
+    except Exception:
+        guild_info = {
+            "guild_id": gid,
+            "clan_name": f"Guild #{gid}",
+            "region": region,
+            "guild_level": 1,
+            "slogan": "",
+            "current_members": 0,
+            "max_members": 35,
+            "leader_id": "Unknown",
+            "score": 0,
+            "weekly_activity": 0,
+        }
+
+    group_key = f"grp_{gid}_{int(time.time())}"
+    bound_uids = list(bot_state.accounts.keys())[:count]
+    bot_state.paused_accounts.difference_update(bound_uids)
+
+    ACTIVE_GROUPS[group_key] = {
+        "group_key": group_key,
+        "guild_id": gid,
+        "region": region,
+        "clan_name": guild_info.get("clan_name", f"Guild #{gid}"),
+        "guild_info": guild_info,
+        "target_count": count,
+        "account_uids": bound_uids,
+        "status": "RUNNING" if len(bound_uids) >= count else "GENERATING",
+        "glory_pushed": 0,
+        "created_at": time.time(),
+    }
+    print_success(f"[DASHBOARD] Group launched: {group_key} -> Guild {gid} ({region})")
+    return jsonify({"ok": True, "group_key": group_key, "guild_info": guild_info})
+
+@api_app.route('/api/groups/stop', methods=['POST'])
+def ApiGroupsStop():
+    body = request.get_json(silent=True) or {}
+    group_key = str(body.get("group_key") or "").strip()
+    grp = ACTIVE_GROUPS.pop(group_key, None)
+    if not grp:
+        return jsonify({"ok": False, "error": "Group not found"}), 404
+    for uid in grp.get("account_uids", []):
+        bot_state.paused_accounts.add(str(uid))
+        bot_state.update_status(str(uid), "STOPPED")
+    print_warning(f"[DASHBOARD] Group stopped: {group_key}")
+    return jsonify({"ok": True, "group_key": group_key})
+
+@api_app.route('/api/groups/restart', methods=['POST'])
+def ApiGroupsRestart():
+    body = request.get_json(silent=True) or {}
+    group_key = str(body.get("group_key") or "").strip()
+    grp = ACTIVE_GROUPS.get(group_key)
+    if not grp:
+        return jsonify({"ok": False, "error": "Group not found"}), 404
+    for uid in grp.get("account_uids", []):
+        bot_state.paused_accounts.discard(str(uid))
+        bot_state.update_status(str(uid), "ONLINE")
+    grp["status"] = "RUNNING"
+    print_info(f"[DASHBOARD] Group restarted: {group_key}")
+    return jsonify({"ok": True, "group_key": group_key})
+
 @api_app.route('/health', methods=['GET'])
 def HealthCheck():
     return Pretty({"status": "ok", "api_port": API_PORT, "web_port": WEB_PORT}), 200
@@ -2182,11 +2420,13 @@ def run_api_server():
     except Exception: LanIp = "127.0.0.1"
     try: PublicIp = httpx.get("https://api.ipify.org", timeout=10, verify=False).text.strip()
     except Exception: PublicIp = "Unknown"
-    print_success(f"[TOKEN-API] http://{PublicIp}:{API_PORT}  (local {LanIp}:{API_PORT})")
+    print_success(f"[TOKEN-API + UI] http://{PublicIp}:{API_PORT}  (local {LanIp}:{API_PORT})")
     return PublicIp
 
 # ═══════════════════════ MAIN ═══════════════════════
 async def main():
+    global MAIN_LOOP
+    MAIN_LOOP = asyncio.get_running_loop()
     _rbc_banner()
     try:
         autoupdate.shared().check(force=True)
